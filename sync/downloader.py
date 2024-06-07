@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional, Tuple, List
 
 
-class DownloadFile:
+class FileDownloader:
     # Class variables for default maximum concurrency and chunk size
     MAX_CONCURRENCY = 4
     CHUNK = 1024
@@ -18,8 +18,8 @@ class DownloadFile:
         url: str,
         path: str,
         file_name: str,
-        chunk: int = CHUNK,
-        max_concurrency: int = MAX_CONCURRENCY,
+        chunk: int = None,
+        max_concurrency: int = None,
         progress: Optional[Callable[[int, int, int, Tuple], None]] = None,
         progress_args: Optional[Tuple] = None
     ) -> None:
@@ -58,8 +58,8 @@ class DownloadFile:
         self.url = url
         self.path = path
         self.file_name = file_name
-        self.max_concurrency = max_concurrency
-        self.chunk = chunk
+        self.max_concurrency = max_concurrency or self.MAX_CONCURRENCY
+        self.chunk = chunk or self.CHUNK
         self.progress = progress
         self.progress_args = progress_args
         self.content_length = self.__get_content_length()
@@ -111,12 +111,12 @@ class DownloadFile:
         chunked (``int``): 
                 The size of the chunk just downloaded.
         """
-        if self.progress:
-            self.current += chunked
-            if not self.progress_args:
-                self.progress_args = ()
-            self.progress(self.current, self.content_length, chunked, *self.progress_args)
-    
+        
+        self.current += chunked
+        if not self.progress_args:
+            self.progress_args = ()
+        self.progress(self.current, self.content_length, chunked, *self.progress_args)
+
     def __downloader(self, client: int, range: Tuple[int, float]) -> None:
         """
         Downloads a specific range of the file in a separate thread.
@@ -132,7 +132,9 @@ class DownloadFile:
         with open(self.path.joinpath(f'{str(client)}_{self.file_name}.temp'), 'wb') as f:
             for chunk in r.iter_content(self.chunk):
                 f.write(chunk)
-                self.__run_progress(len(chunk))
+                
+                if self.progress:
+                    self.__run_progress(len(chunk))
     
     def __merge_files(self) -> None:
         """
@@ -186,7 +188,7 @@ if __name__ == "__main__":
     def progress_callback(current: int, total: int, chunked: int, bar: tqdm) -> None:
         bar.update(chunked)
     
-    downloader = DownloadFile(
+    downloader = FileDownloader(
         'https://dl2.soft98.ir/soft/n/Notepad.8.6.8.x86.rar?1717760731',
         'c:/Users/pc/Desktop',
         'a.rar',
