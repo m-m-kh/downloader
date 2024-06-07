@@ -140,7 +140,7 @@ class FileDownloader:
         """
         Merges all the downloaded chunk files into the final file.
         """
-        with open(self.path.joinpath(self.file_name), 'wb') as f1:
+        with open(saved:=self.path.joinpath(self.file_name), 'wb') as f1:
             for cl in self.__cl_counter():
                 with open(cl, 'rb') as f2:
                     while True:
@@ -148,6 +148,7 @@ class FileDownloader:
                         if not content:
                             break
                         f1.write(content)
+        return saved
     
     def __delete_temps(self) -> None:
         """
@@ -171,15 +172,19 @@ class FileDownloader:
                     self.__delete_temps()
                     raise ConnectionRefusedError("Connection refused, temp files will be deleted.")
             
-            self.__merge_files()
+            path = self.__merge_files()
             self.__delete_temps()
+            
+        return path
+
+
 
 # Example usage with progress bar using tqdm
 from tqdm import tqdm
 
 if __name__ == "__main__":
     bar = tqdm(
-        total=int(get('https://dl2.soft98.ir/soft/n/Notepad.8.6.8.x86.rar?1717760731').headers['Content-Length']),
+        total=int(get('https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip').headers['Content-Length']),
         unit='iB',
         unit_scale=True,
         unit_divisor=1024,
@@ -189,7 +194,7 @@ if __name__ == "__main__":
         bar.update(chunked)
     
     downloader = FileDownloader(
-        'https://dl2.soft98.ir/soft/n/Notepad.8.6.8.x86.rar?1717760731',
+        'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
         'c:/Users/pc/Desktop',
         'a.rar',
         progress=progress_callback,
