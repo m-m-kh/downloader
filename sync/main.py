@@ -111,8 +111,8 @@ class DownloadFile:
         chunked (``int``): 
                 The size of the chunk just downloaded.
         """
-        self.current += chunked
         if self.progress:
+            self.current += chunked
             if not self.progress_args:
                 self.progress_args = ()
             self.progress(self.current, self.content_length, chunked, *self.progress_args)
