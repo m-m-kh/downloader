@@ -1,13 +1,12 @@
-from requests import get
-from os import remove
-from os.path import exists
+import asyncio
+import aiohttp
+from aiofiles import os
+from aiofile import async_open
 from pathlib import Path
-from time import sleep
-from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Optional, Tuple, List
+import httpx
 
-
-class DownloadFile:
+class FileDownloader:
     # Class variables for default maximum concurrency and chunk size
     MAX_CONCURRENCY = 4
     CHUNK = 1024
@@ -18,8 +17,10 @@ class DownloadFile:
         url: str,
         path: str,
         file_name: str,
-        chunk: int = CHUNK,
-        max_concurrency: int = MAX_CONCURRENCY,
+        proxy:str = '',
+        auth:dict = None,
+        chunk: int = None,
+        max_concurrency: int = None,
         progress: Optional[Callable[[int, int, int, Tuple], None]] = None,
         progress_args: Optional[Tuple] = None
     ) -> None:
@@ -58,13 +59,15 @@ class DownloadFile:
         self.url = url
         self.path = path
         self.file_name = file_name
-        self.max_concurrency = max_concurrency
-        self.chunk = chunk
+        self.proxy = proxy
+        self.auth = auth
+        self.max_concurrency = max_concurrency or self.MAX_CONCURRENCY
+        self.chunk = chunk or self.CHUNK
         self.progress = progress
         self.progress_args = progress_args
-        self.content_length = self.__get_content_length()
         
-    def __get_content_length(self) -> int:
+
+    async def __get_content_length(self, session) -> int:
         """
         Fetches the content length of the file from the server.
 
@@ -72,7 +75,11 @@ class DownloadFile:
         ``int``: 
                 The content length of the file.
         """
-        r = get(self.url, stream=True)
+        
+        r = await session.get('https://api.myip.com', auth=self.auth)
+        print(r.text)
+
+        r = await session.get(self.url, auth=self.auth)
         return int(r.headers.get('Content-Length'))
         
     def __ranges(self) -> List[Tuple[int, Tuple[int, float]]]:
@@ -103,7 +110,7 @@ class DownloadFile:
         """
         return [self.path.joinpath(f'{i}_{self.file_name}.temp') for i in range(1, self.max_concurrency + 1)]
     
-    def __run_progress(self, chunked: int) -> None:
+    async def __run_progress(self, chunked: int) -> None:
         """
         Updates the progress of the download and calls the progress callback if provided.
 
@@ -111,13 +118,13 @@ class DownloadFile:
         chunked (``int``): 
                 The size of the chunk just downloaded.
         """
+        
         self.current += chunked
-        if self.progress:
-            if not self.progress_args:
-                self.progress_args = ()
-            self.progress(self.current, self.content_length, chunked, *self.progress_args)
-    
-    def __downloader(self, client: int, range: Tuple[int, float]) -> None:
+        if not self.progress_args:
+            self.progress_args = ()
+        await self.progress(self.current, self.content_length, chunked, *self.progress_args)
+
+    async def __downloader(self, session, client: int, range: Tuple[int, float]) -> None:
         """
         Downloads a specific range of the file in a separate thread.
 
@@ -127,72 +134,93 @@ class DownloadFile:
         range (``tuple``): 
                 The byte range to download.
         """
-        r = get(self.url, stream=True, headers={'Range': f'bytes={int(range[0])}-{int(range[1] - 1)}'})
         
-        with open(self.path.joinpath(f'{str(client)}_{self.file_name}.temp'), 'wb') as f:
-            for chunk in r.iter_content(self.chunk):
-                f.write(chunk)
-                self.__run_progress(len(chunk))
+        r = await session.get(self.url,
+            headers={'Range': f'bytes={int(range[0])}-{int(range[1] - 1)}'},
+            auth=self.auth)
     
-    def __merge_files(self) -> None:
+        async with async_open(self.path.joinpath(f'{str(client)}_{self.file_name}.temp'), 'wb') as f:
+            async for chunk in r.aiter_bytes(self.chunk):
+                await f.write(chunk)
+        
+                if self.progress:
+                    await self.__run_progress(len(chunk))
+    
+    async def __merge_files(self) -> None:
         """
         Merges all the downloaded chunk files into the final file.
         """
-        with open(self.path.joinpath(self.file_name), 'wb') as f1:
+        async with async_open(saved:=self.path.joinpath(self.file_name), 'wb') as f1:
             for cl in self.__cl_counter():
-                with open(cl, 'rb') as f2:
+                async with async_open(cl, 'rb') as f2:
                     while True:
-                        content = f2.read(1024 * 1024)
+                        content = await f2.read(1024 * 1024)
                         if not content:
                             break
-                        f1.write(content)
+                        await f1.write(content)
+        return saved
     
-    def __delete_temps(self) -> None:
+    async def __delete_temps(self) -> None:
         """
         Deletes all the temporary chunk files.
         """
         for cl in self.__cl_counter():
-            if exists(cl):
-                remove(cl)
+            if await os.path.exists(cl):
+                await os.remove(cl)
     
-    def download(self) -> None:
+    async def download(self) -> None:
         """
         Initiates the download process using multiple threads.
         """
-        with ThreadPoolExecutor(self.max_concurrency) as pool:
-            tasks = [pool.submit(self.__downloader, range[0], range[1]) for range in self.__ranges()]
-            for task in tasks:
-                try:
-                    task.result()
-                except:
-                    sleep(1)
-                    self.__delete_temps()
-                    raise ConnectionRefusedError("Connection refused, temp files will be deleted.")
+        async with httpx.AsyncClient() as session:
+            self.content_length = await self.__get_content_length(session)
+            tasks = [self.__downloader(session, range[0], range[1]) for range in self.__ranges()]
+            try:
+                await asyncio.gather(*tasks)
+            except Exception as e:
+                print(e)
+                await asyncio.sleep(1)
+                await self.__delete_temps()
+                raise ConnectionRefusedError("Connection refused, temp files will be deleted.")
             
-            self.__merge_files()
-            self.__delete_temps()
+            path = await self.__merge_files()
+            await self.__delete_temps()
+            
+        return path
+    
+    
+
+
+# r = httpx.Client(proxies={'http://':'socks5://127.0.0.1:10808',
+#                           'https://': 'socks5://127.0.0.1:10808'})
+# print(r.get('https://api.myip.com').text)
+
 
 # Example usage with progress bar using tqdm
-from tqdm import tqdm
-
+# from tqdm import tqdm, asyncio
+import aiohttp.connector
+from tqdm.asyncio import tqdm
+import requests
 if __name__ == "__main__":
-    bar = tqdm(
-        total=int(get('https://dl2.soft98.ir/soft/n/Notepad.8.6.8.x86.rar?1717760731').headers['Content-Length']),
-        unit='iB',
-        unit_scale=True,
-        unit_divisor=1024,
-    )
+    # bar = tqdm(
+    #     total=int(requests.get('https://dl2.soft98.ir/soft/c/Codec.Tweak.Tool.6.7.2.rar?1718381181').headers['Content-Length']),
+    #     unit='iB',
+    #     unit_scale=True,
+    #     unit_divisor=1024,
+    # )
     
-    def progress_callback(current: int, total: int, chunked: int, bar: tqdm) -> None:
-        bar.update(chunked)
+    # async def progress_callback(current: int, total: int, chunked: int, bar: tqdm) -> None:
+    #     bar.update(chunked)
     
-    downloader = DownloadFile(
-        'https://dl2.soft98.ir/soft/n/Notepad.8.6.8.x86.rar?1717760731',
+    downloader = FileDownloader(
+        'https://dl2.soft98.ir/soft/c/Codec.Tweak.Tool.6.7.2.rar?1718381181',
         'c:/Users/pc/Desktop',
         'a.rar',
-        progress=progress_callback,
-        progress_args=(bar,)
+        # proxy='socks5://127.0.0.1:10808'
+               
+        # progress=progress_callback,   
+        # progress_args=(bar,)
     )
  
-    downloader.download()
+    asyncio.run(downloader.download())
 

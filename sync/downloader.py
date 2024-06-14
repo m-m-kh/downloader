@@ -18,6 +18,8 @@ class FileDownloader:
         url: str,
         path: str,
         file_name: str,
+        proxy:dict = None,
+        auth:dict = None,
         chunk: int = None,
         max_concurrency: int = None,
         progress: Optional[Callable[[int, int, int, Tuple], None]] = None,
@@ -58,6 +60,8 @@ class FileDownloader:
         self.url = url
         self.path = path
         self.file_name = file_name
+        self.proxy = proxy
+        self.auth = auth
         self.max_concurrency = max_concurrency or self.MAX_CONCURRENCY
         self.chunk = chunk or self.CHUNK
         self.progress = progress
@@ -72,7 +76,10 @@ class FileDownloader:
         ``int``: 
                 The content length of the file.
         """
-        r = get(self.url, stream=True)
+        
+        print(get('https://api.myip.com/', stream=True, proxies=self.proxy).json())
+        
+        r = get(self.url, stream=True, proxies=self.proxy, auth=self.auth)
         return int(r.headers.get('Content-Length'))
         
     def __ranges(self) -> List[Tuple[int, Tuple[int, float]]]:
@@ -127,7 +134,11 @@ class FileDownloader:
         range (``tuple``): 
                 The byte range to download.
         """
-        r = get(self.url, stream=True, headers={'Range': f'bytes={int(range[0])}-{int(range[1] - 1)}'})
+        r = get(self.url,
+                stream=True,
+                headers={'Range': f'bytes={int(range[0])}-{int(range[1] - 1)}'},
+                auth=self.auth,
+                proxies=self.proxy)
         
         with open(self.path.joinpath(f'{str(client)}_{self.file_name}.temp'), 'wb') as f:
             for chunk in r.iter_content(self.chunk):
@@ -183,22 +194,24 @@ class FileDownloader:
 from tqdm import tqdm
 
 if __name__ == "__main__":
-    bar = tqdm(
-        total=int(get('https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip').headers['Content-Length']),
-        unit='iB',
-        unit_scale=True,
-        unit_divisor=1024,
-    )
+    # bar = tqdm(
+    #     total=int(get('https://dls.tekmusic.ir/alien-music/028_Modus.mp3').headers['Content-Length']),
+    #     unit='iB',
+    #     unit_scale=True,
+    #     unit_divisor=1024,
+    # )
     
-    def progress_callback(current: int, total: int, chunked: int, bar: tqdm) -> None:
-        bar.update(chunked)
+    # def progress_callback(current: int, total: int, chunked: int, bar: tqdm) -> None:
+    #     bar.update(chunked)
     
     downloader = FileDownloader(
-        'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+        'https://dls.tekmusic.ir/alien-music/028_Modus.mp3',
         'c:/Users/pc/Desktop',
         'a.rar',
-        progress=progress_callback,
-        progress_args=(bar,)
+        proxy={'http': 'socks4://127.0.0.1:10808',
+               'https': 'socks4://127.0.0.1:10808'}
+        # progress=progress_callback,
+        # progress_args=(bar,)
     )
  
     downloader.download()
