@@ -4,7 +4,7 @@ from aiofiles import os
 from aiofile import async_open
 from pathlib import Path
 from typing import Callable, Optional, Tuple, List
-import httpx
+from aiohttp_socks import ProxyConnector
 
 class FileDownloader:
     # Class variables for default maximum concurrency and chunk size
@@ -76,10 +76,9 @@ class FileDownloader:
                 The content length of the file.
         """
         
-        r = await session.get('https://api.myip.com', auth=self.auth)
-        print(r.text)
+        r = await session.get('https://api.myip.com')
 
-        r = await session.get(self.url, auth=self.auth)
+        r = await session.get(self.url)
         return int(r.headers.get('Content-Length'))
         
     def __ranges(self) -> List[Tuple[int, Tuple[int, float]]]:
@@ -140,7 +139,7 @@ class FileDownloader:
             auth=self.auth)
     
         async with async_open(self.path.joinpath(f'{str(client)}_{self.file_name}.temp'), 'wb') as f:
-            async for chunk in r.aiter_bytes(self.chunk):
+            async for chunk in r.content.iter_chunked(self.chunk):
                 await f.write(chunk)
         
                 if self.progress:
@@ -172,7 +171,8 @@ class FileDownloader:
         """
         Initiates the download process using multiple threads.
         """
-        async with httpx.AsyncClient() as session:
+        connector = ProxyConnector.from_url(self.proxy)
+        async with aiohttp.ClientSession(auth=self.auth, connector=connector) as session:
             self.content_length = await self.__get_content_length(session)
             tasks = [self.__downloader(session, range[0], range[1]) for range in self.__ranges()]
             try:
@@ -193,7 +193,7 @@ class FileDownloader:
 
 # r = httpx.Client(proxies={'http://':'socks5://127.0.0.1:10808',
 #                           'https://': 'socks5://127.0.0.1:10808'})
-# print(r.get('https://api.myip.com').text)
+
 
 
 # Example usage with progress bar using tqdm
@@ -213,7 +213,7 @@ if __name__ == "__main__":
     #     bar.update(chunked)
     
     downloader = FileDownloader(
-        'https://dl2.soft98.ir/soft/c/Codec.Tweak.Tool.6.7.2.rar?1718381181',
+        'https://dl2.soft98.ir/soft/c/Codec.Tweak.Tool.6.7.2.rar',
         'c:/Users/pc/Desktop',
         'a.rar',
         # proxy='socks5://127.0.0.1:10808'

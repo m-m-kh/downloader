@@ -205,9 +205,9 @@ if __name__ == "__main__":
     #     bar.update(chunked)
     
     downloader = FileDownloader(
-        'https://dls.tekmusic.ir/alien-music/028_Modus.mp3',
+        'https://api.myip.com',
         'c:/Users/pc/Desktop',
-        'a.rar',
+        'a.txt',
         proxy={'http': 'socks4://127.0.0.1:10808',
                'https': 'socks4://127.0.0.1:10808'}
         # progress=progress_callback,
